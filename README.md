@@ -5,26 +5,30 @@ A desktop file management application built with Next.js and Electron.
 ## Setup
 
 1. Install dependencies:
-\`\`\`bash
+```bash
 npm install
-# or
+```
+or
+```bash
 pnpm install
-\`\`\`
+```
 
 2. **Set up your OpenAI API key** (Required for AI file organization):
    - Create a `.env.local` file in the root directory
-   - Add your OpenAI API key:
-   \`\`\`
-   OPENAI_API_KEY=your_openai_api_key_here
-   \`\`\`
    - Get your API key from: https://platform.openai.com/api-keys
+   - Add your OpenAI API key
+```
+OPENAI_API_KEY=your_openai_api_key_here
+```
 
 3. Run in development mode:
-\`\`\`bash
+```bash
 npm run electron:dev
-# or
+```
+or
+```bash
 pnpm electron:dev
-\`\`\`
+```
 
 This will start the Next.js dev server and launch the Electron app.
 
@@ -32,11 +36,14 @@ This will start the Next.js dev server and launch the Electron app.
 
 To build the application for production:
 
-\`\`\`bash
+```bash
 npm run electron:build
-# or
+```
+or
+
+```bash
 pnpm electron:build
-\`\`\`
+```
 
 This will create distributable packages in the `dist` folder.
 
