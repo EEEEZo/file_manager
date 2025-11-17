@@ -5,18 +5,22 @@ A desktop file management application built with Next.js and Electron.
 ## Setup
 
 1. Install dependencies:
-\`\`\`bash
+```bash
 npm install
-# or
+```
+or
+```bash
 pnpm install
-\`\`\`
+```
 
 2. Run in development mode:
 \`\`\`bash
 npm run electron:dev
-# or
+```
+or
+```bash
 pnpm electron:dev
-\`\`\`
+```
 
 This will start the Next.js dev server and launch the Electron app.
 
@@ -30,11 +34,14 @@ This will start the Next.js dev server and launch the Electron app.
 
 To build the application for production:
 
-\`\`\`bash
+```bash
 npm run electron:build
-# or
+```
+or
+
+```bash
 pnpm electron:build
-\`\`\`
+```
 
 This will create distributable packages in the `dist` folder.
 
