@@ -1,17 +1,20 @@
 import { generateText } from "ai"
-import { openai } from "@ai-sdk/openai"
+import { createOpenAI } from "@ai-sdk/openai"
 
 export async function POST(request: Request) {
   try {
-    const { files, prompt, folders } = await request.json()
-
-    const apiKey = process.env.OPENAI_API_KEY
+    const { files, prompt, folders, apiKey } = await request.json()
+    
     if (!apiKey) {
-      throw new Error("OpenAI API key not found. Please set OPENAI_API_KEY environment variable.")
+      throw new Error("OpenAI API key not found. Please set your API key in Settings.")
     }
 
+    const openai = createOpenAI({
+      apiKey: apiKey,
+    })
+
     const { text } = await generateText({
-      model: openai("gpt-4o-mini"),
+      model: openai.chat("gpt-4o-mini"),
       prompt: `You are a file organization assistant. Based on the user's request and file contents, determine which folder each file should be moved to.
 
 User's organization request: "${prompt}"

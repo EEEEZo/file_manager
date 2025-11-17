@@ -16,4 +16,9 @@ contextBridge.exposeInMainWorld("electron", {
 
   readLogs: () => ipcRenderer.invoke("read-logs"),
   revertOperation: (logId) => ipcRenderer.invoke("revert-operation", logId),
+
+  // Settings methods
+  loadSettings: () => ipcRenderer.invoke("load-settings"),
+  saveSettings: (settings) => ipcRenderer.invoke("save-settings", settings),
+  checkConflicts: (operations) => ipcRenderer.invoke("check-conflicts", operations),
 })

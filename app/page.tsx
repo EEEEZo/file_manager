@@ -1,7 +1,7 @@
 "use client"
 
 import { useState, useEffect } from "react"
-import { ChevronDown, Folder, Minus, Square, X, Plus, Trash2, Loader2 } from "lucide-react"
+import { ChevronDown, Folder, Minus, Square, X, Plus, Trash2, Loader2, Settings } from 'lucide-react'
 
 type FileResult = {
   number: number
@@ -53,6 +53,9 @@ export default function FileManager() {
   const [availableFolders, setAvailableFolders] = useState<string[]>([])
   const [showManageFolders, setShowManageFolders] = useState(false)
   const [isOrganizing, setIsOrganizing] = useState(false)
+  const [showSettings, setShowSettings] = useState(false)
+  const [apiKey, setApiKey] = useState("")
+  const [tempApiKey, setTempApiKey] = useState("")
 
   useEffect(() => {
     const loadFiles = async () => {
@@ -81,6 +84,74 @@ export default function FileManager() {
     }
   }, [activeTab])
 
+  useEffect(() => {
+    const loadSettings = async () => {
+      if (typeof window !== "undefined" && (window as any).electron) {
+        const result = await (window as any).electron.loadSettings()
+        if (result.success) {
+          if (result.folders) {
+            setAvailableFolders(result.folders)
+          }
+          if (result.apiKey) {
+            setApiKey(result.apiKey)
+          }
+        }
+      }
+    }
+    loadSettings()
+  }, [])
+
+  useEffect(() => {
+    const saveSettings = async () => {
+      if (typeof window !== "undefined" && (window as any).electron) {
+        await (window as any).electron.saveSettings({ folders: availableFolders })
+      }
+    }
+    if (availableFolders.length > 0) {
+      saveSettings()
+    }
+  }, [availableFolders])
+
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key === "a" && activeTab === "files") {
+        e.preventDefault()
+        setSelectedFiles(new Set(files.map((f) => f.name)))
+      }
+
+      if (e.key === "Delete" && showResults && fileResults.length > 0) {
+        e.preventDefault()
+        handleDelete()
+      }
+
+      if (e.key === "Enter") {
+        if (showResults && fileResults.length > 0) {
+          e.preventDefault()
+          handleMove()
+        } else if (selectedLog) {
+          e.preventDefault()
+          handleConfirm()
+        }
+      }
+
+      if (e.key === "Escape") {
+        if (showManageFolders) {
+          setShowManageFolders(false)
+        } else if (showSettings) {
+          setShowSettings(false)
+        } else if (showResults) {
+          setShowResults(false)
+          setFileResults([])
+        } else if (selectedLog) {
+          setSelectedLog(null)
+        }
+      }
+    }
+
+    window.addEventListener("keydown", handleKeyDown)
+    return () => window.removeEventListener("keydown", handleKeyDown)
+  }, [activeTab, files, showResults, fileResults, selectedLog, showManageFolders, showSettings])
+
   const toggleFile = (fileName: string) => {
     const newSelected = new Set(selectedFiles)
     if (newSelected.has(fileName)) {
@@ -105,6 +176,12 @@ export default function FileManager() {
       return
     }
 
+    if (!apiKey) {
+      alert("Please set your OpenAI API key in Settings")
+      setShowSettings(true)
+      return
+    }
+
     setIsOrganizing(true)
 
     const fileContents: { fileName: string; content: string; path: string }[] = []
@@ -126,11 +203,14 @@ export default function FileManager() {
     try {
       const response = await fetch("/api/organize", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { 
+          "Content-Type": "application/json",
+        },
         body: JSON.stringify({
           files: fileContents,
           prompt: inputValue || "Organize these files based on their content",
           folders: availableFolders,
+          apiKey: apiKey, // Send API key from settings.json
         }),
       })
 
@@ -256,14 +336,25 @@ export default function FileManager() {
         return { sourcePath, destinationPath }
       })
 
+      const conflictOption = await (window as any).electron.checkConflicts(operations)
+      
+      if (conflictOption === "cancel") {
+        return
+      }
+
       const logName = inputValue || `File Organization ${new Date().toLocaleString()}`
-      const result = await (window as any).electron.moveFiles(operations, logName)
+      const result = await (window as any).electron.moveFiles(operations, logName, conflictOption)
 
       if (result.success) {
         alert(`Successfully moved ${selectedResults.length} file(s)`)
-        setShowResults(false)
-        setFileResults([])
-        setInputValue("")
+        const remainingResults = fileResults.filter((r) => !r.selected)
+        setFileResults(remainingResults)
+        
+        if (remainingResults.length === 0) {
+          setShowResults(false)
+          setInputValue("")
+        }
+        
         const filesResult = await (window as any).electron.listFiles(currentDirectory)
         if (filesResult.success) {
           setFiles(filesResult.files)
@@ -294,14 +385,31 @@ export default function FileManager() {
 
       if (result.success) {
         alert(`Successfully deleted ${selectedResults.length} file(s)`)
-        setShowResults(false)
-        setFileResults([])
+        const remainingResults = fileResults.filter((r) => !r.selected)
+        setFileResults(remainingResults)
+        
+        if (remainingResults.length === 0) {
+          setShowResults(false)
+          setInputValue("")
+        }
+        
         const filesResult = await (window as any).electron.listFiles(currentDirectory)
         if (filesResult.success) {
           setFiles(filesResult.files)
         }
       } else {
         alert(`Failed to delete files: ${result.error}`)
+      }
+    }
+  }
+
+  const handleSaveApiKey = async () => {
+    if (typeof window !== "undefined" && (window as any).electron) {
+      const result = await (window as any).electron.saveSettings({ apiKey: tempApiKey })
+      if (result.success) {
+        setApiKey(tempApiKey)
+        setShowSettings(false)
+        alert("API key saved successfully!")
       }
     }
   }
@@ -351,6 +459,16 @@ export default function FileManager() {
           <Folder className="h-5 w-5" />
           <span className="text-sm font-medium">Manage Folders</span>
           <ChevronDown className="h-4 w-4" />
+        </button>
+
+        <button
+          onClick={() => {
+            setTempApiKey(apiKey)
+            setShowSettings(true)
+          }}
+          className="no-drag ml-auto flex items-center gap-2 rounded-lg bg-[#0366d6] px-4 py-2 text-sm font-semibold text-white hover:bg-[#0256c7]"
+        >
+          <Settings className="h-5 w-5" />
         </button>
       </div>
 
@@ -402,6 +520,80 @@ export default function FileManager() {
                 className="rounded-lg bg-[#6a737d] px-4 py-2 text-sm font-semibold text-white hover:bg-[#586069]"
               >
                 Done
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showSettings && (
+        <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/50">
+          <div className="w-[500px] rounded-lg bg-white shadow-xl">
+            <div className="flex items-center justify-between border-b border-[#cccccc] px-6 py-4">
+              <h2 className="text-lg font-semibold text-[#000000]">Settings</h2>
+              <button onClick={() => setShowSettings(false)} className="text-[#586069] hover:text-[#000000]">
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+
+            <div className="p-6">
+              <div className="mb-4">
+                <label className="mb-2 block text-sm font-semibold text-[#000000]">OpenAI API Key</label>
+                <input
+                  type="password"
+                  value={tempApiKey}
+                  onChange={(e) => setTempApiKey(e.target.value)}
+                  placeholder="sk-..."
+                  className="w-full rounded-lg border border-[#cccccc] bg-white px-3 py-2 text-sm text-[#000000] focus:border-[#0366d6] focus:outline-none focus:ring-1 focus:ring-[#0366d6]"
+                />
+                <p className="mt-2 text-xs text-[#586069]">
+                  Get your API key from{" "}
+                  <a
+                    href="https://platform.openai.com/api-keys"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-[#0366d6] hover:underline"
+                  >
+                    platform.openai.com/api-keys
+                  </a>
+                </p>
+              </div>
+
+              <div className="mb-4">
+                <h3 className="mb-2 text-sm font-semibold text-[#000000]">Keyboard Shortcuts</h3>
+                <div className="space-y-1 text-xs text-[#586069]">
+                  <div className="flex justify-between">
+                    <span>Select all files:</span>
+                    <kbd className="rounded bg-[#f6f8fa] px-2 py-1 font-mono">Ctrl+A</kbd>
+                  </div>
+                  <div className="flex justify-between">
+                    <span>Delete selected:</span>
+                    <kbd className="rounded bg-[#f6f8fa] px-2 py-1 font-mono">Delete</kbd>
+                  </div>
+                  <div className="flex justify-between">
+                    <span>Confirm action:</span>
+                    <kbd className="rounded bg-[#f6f8fa] px-2 py-1 font-mono">Enter</kbd>
+                  </div>
+                  <div className="flex justify-between">
+                    <span>Cancel/Close:</span>
+                    <kbd className="rounded bg-[#f6f8fa] px-2 py-1 font-mono">Esc</kbd>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div className="flex justify-end gap-3 border-t border-[#cccccc] px-6 py-4">
+              <button
+                onClick={() => setShowSettings(false)}
+                className="rounded-lg bg-[#6a737d] px-4 py-2 text-sm font-semibold text-white hover:bg-[#586069]"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleSaveApiKey}
+                className="rounded-lg bg-[#0366d6] px-4 py-2 text-sm font-semibold text-white hover:bg-[#0256c7]"
+              >
+                Save
               </button>
             </div>
           </div>
@@ -580,18 +772,8 @@ export default function FileManager() {
                               }`}
                             >
                               {file.selected && (
-                                <svg
-                                  className="h-3 w-3 text-white"
-                                  fill="none"
-                                  viewBox="0 0 24 24"
-                                  stroke="currentColor"
-                                >
-                                  <path
-                                    strokeLinecap="round"
-                                    strokeLinejoin="round"
-                                    strokeWidth={3}
-                                    d="M5 13l4 4L19 7"
-                                  />
+                                <svg className="h-3 w-3 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" />
                                 </svg>
                               )}
                             </button>
@@ -672,18 +854,8 @@ export default function FileManager() {
                               }`}
                             >
                               {result.selected && (
-                                <svg
-                                  className="h-3 w-3 text-white"
-                                  fill="none"
-                                  viewBox="0 0 24 24"
-                                  stroke="currentColor"
-                                >
-                                  <path
-                                    strokeLinecap="round"
-                                    strokeLinejoin="round"
-                                    strokeWidth={3}
-                                    d="M5 13l4 4L19 7"
-                                  />
+                                <svg className="h-3 w-3 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" />
                                 </svg>
                               )}
                             </button>

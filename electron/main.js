@@ -9,12 +9,26 @@ const getLogsPath = () => {
   return path.join(userDataPath, "logs.json")
 }
 
+const getSettingsPath = () => {
+  const userDataPath = app.getPath("userData")
+  return path.join(userDataPath, "settings.json")
+}
+
 const initializeLogs = async () => {
   const logsPath = getLogsPath()
   try {
     await fs.access(logsPath)
   } catch {
     await fs.writeFile(logsPath, JSON.stringify([]))
+  }
+}
+
+const initializeSettings = async () => {
+  const settingsPath = getSettingsPath()
+  try {
+    await fs.access(settingsPath)
+  } catch {
+    await fs.writeFile(settingsPath, JSON.stringify({ folders: [], apiKey: "" }))
   }
 }
 
@@ -110,7 +124,7 @@ ipcMain.handle("list-files", async (event, directoryPath) => {
   }
 })
 
-ipcMain.handle("move-files", async (event, operations, logName) => {
+ipcMain.handle("move-files", async (event, operations, logName, conflictOption = "rename") => {
   try {
     const results = []
 
@@ -121,13 +135,48 @@ ipcMain.handle("move-files", async (event, operations, logName) => {
       // Create destination directory if it doesn't exist
       await fs.mkdir(destDir, { recursive: true })
 
+      let finalDestPath = destinationPath
+
+      // Check if file exists and handle conflict
+      try {
+        await fs.access(destinationPath)
+        
+        if (conflictOption === "skip") {
+          results.push({
+            fileName: path.basename(sourcePath),
+            sourcePath,
+            destinationPath: "Skipped - file exists",
+            success: false,
+          })
+          continue
+        } else if (conflictOption === "rename") {
+          // Add number suffix to filename
+          const ext = path.extname(destinationPath)
+          const base = path.basename(destinationPath, ext)
+          const dir = path.dirname(destinationPath)
+          let counter = 1
+          while (true) {
+            finalDestPath = path.join(dir, `${base} (${counter})${ext}`)
+            try {
+              await fs.access(finalDestPath)
+              counter++
+            } catch {
+              break
+            }
+          }
+        }
+        // If "overwrite", just use the original path
+      } catch {
+        // File doesn't exist, proceed normally
+      }
+
       // Move the file
-      await fs.rename(sourcePath, destinationPath)
+      await fs.rename(sourcePath, finalDestPath)
 
       results.push({
         fileName: path.basename(sourcePath),
         sourcePath,
-        destinationPath,
+        destinationPath: finalDestPath,
         success: true,
       })
     }
@@ -151,7 +200,7 @@ ipcMain.handle("move-files", async (event, operations, logName) => {
     // Save log
     const logsPath = getLogsPath()
     const logs = JSON.parse(await fs.readFile(logsPath, "utf-8"))
-    logs.unshift(logEntry) // Add to beginning
+    logs.unshift(logEntry)
     await fs.writeFile(logsPath, JSON.stringify(logs, null, 2))
 
     return { success: true, results, logEntry }
@@ -241,8 +290,70 @@ ipcMain.handle("revert-operation", async (event, logId) => {
   }
 })
 
+ipcMain.handle("load-settings", async () => {
+  try {
+    const settingsPath = getSettingsPath()
+    const settings = JSON.parse(await fs.readFile(settingsPath, "utf-8"))
+    return { success: true, ...settings }
+  } catch (error) {
+    return { success: false, error: error.message }
+  }
+})
+
+ipcMain.handle("save-settings", async (event, newSettings) => {
+  try {
+    const settingsPath = getSettingsPath()
+    let settings = {}
+    try {
+      settings = JSON.parse(await fs.readFile(settingsPath, "utf-8"))
+    } catch {
+      settings = { folders: [], apiKey: "" }
+    }
+    
+    // Merge new settings
+    settings = { ...settings, ...newSettings }
+    await fs.writeFile(settingsPath, JSON.stringify(settings, null, 2))
+    return { success: true }
+  } catch (error) {
+    return { success: false, error: error.message }
+  }
+})
+
+ipcMain.handle("check-conflicts", async (event, operations) => {
+  try {
+    const conflicts = []
+    
+    for (const op of operations) {
+      try {
+        await fs.access(op.destinationPath)
+        conflicts.push(path.basename(op.destinationPath))
+      } catch {
+        // File doesn't exist, no conflict
+      }
+    }
+
+    if (conflicts.length === 0) {
+      return "proceed"
+    }
+
+    const { response } = await dialog.showMessageBox(mainWindow, {
+      type: "question",
+      buttons: ["Rename", "Overwrite", "Skip", "Cancel"],
+      defaultId: 0,
+      title: "File Conflict",
+      message: `${conflicts.length} file(s) already exist in destination:`,
+      detail: conflicts.join("\n") + "\n\nHow would you like to proceed?",
+    })
+
+    return ["rename", "overwrite", "skip", "cancel"][response]
+  } catch (error) {
+    return "cancel"
+  }
+})
+
 app.whenReady().then(async () => {
   await initializeLogs()
+  await initializeSettings() // Initialize settings
   createWindow()
 })
 
