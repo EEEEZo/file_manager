@@ -201,20 +201,37 @@ export default function FileManager() {
     }
 
     try {
-      const response = await fetch("/api/organize", {
-        method: "POST",
-        headers: { 
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          files: fileContents,
-          prompt: inputValue || "Organize these files based on their content",
-          folders: availableFolders,
-          apiKey: apiKey, // Send API key from settings.json
-        }),
-      })
+      // In production, use Electron IPC. In dev, use API endpoint
+      const isDev = typeof window !== "undefined" && window.location.hostname === "localhost"
+      
+      let data
 
-      const data = await response.json()
+      if (isDev && typeof window !== "undefined" && !(window as any).electron) {
+        // Dev without Electron (browser mode)
+        const response = await fetch("/api/organize", {
+          method: "POST",
+          headers: { 
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            files: fileContents,
+            prompt: inputValue || "Organize these files based on their content",
+            folders: availableFolders,
+            apiKey: apiKey,
+          }),
+        })
+        data = await response.json()
+      } else if (typeof window !== "undefined" && (window as any).electron) {
+        // Production with Electron
+        data = await (window as any).electron.organizeFiles(
+          fileContents,
+          inputValue || "Organize these files based on their content",
+          availableFolders,
+          apiKey
+        )
+      } else {
+        throw new Error("Cannot organize files - Electron bridge not available")
+      }
 
       if (data.success) {
         const results: FileResult[] = data.results.map((r: any, index: number) => ({

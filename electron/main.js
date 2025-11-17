@@ -1,6 +1,8 @@
 const { app, BrowserWindow, ipcMain, dialog } = require("electron")
 const path = require("path")
 const fs = require("fs").promises // Add file system module for reading files
+const { generateText } = require("ai")
+const { createOpenAI } = require("@ai-sdk/openai")
 
 let mainWindow
 
@@ -54,7 +56,8 @@ function createWindow() {
     // Open DevTools in development
     mainWindow.webContents.openDevTools()
   } else {
-    mainWindow.loadURL(`file://${path.join(__dirname, "../out/index.html")}`)
+    const indexPath = path.join(__dirname, "../out/index.html")
+    mainWindow.loadFile(indexPath)
   }
 
   mainWindow.on("closed", () => {
@@ -348,6 +351,59 @@ ipcMain.handle("check-conflicts", async (event, operations) => {
     return ["rename", "overwrite", "skip", "cancel"][response]
   } catch (error) {
     return "cancel"
+  }
+})
+
+ipcMain.handle("organize-files", async (event, { files, prompt, folders, apiKey }) => {
+  try {
+    if (!apiKey) {
+      throw new Error("OpenAI API key not found. Please set your API key in Settings.")
+    }
+
+    const openai = createOpenAI({
+      apiKey: apiKey,
+    })
+
+    const { text } = await generateText({
+      model: openai("gpt-4o-mini"),
+      prompt: `You are a file organization assistant. Based on the user's request and file contents, determine which folder each file should be moved to.
+
+User's organization request: "${prompt}"
+
+Available folders:
+${folders.map((f, i) => `${i + 1}. ${f}`).join("\n")}
+
+Files to organize:
+${files
+  .map(
+    (f, i) => `
+File ${i + 1}: ${f.fileName}
+Content preview: ${f.content.substring(0, 500)}...
+`,
+  )
+  .join("\n")}
+
+For each file, respond with a JSON array containing objects with "fileName" and "destination" (full folder path from the available folders list).
+Only respond with the JSON array, no additional text.
+
+Example response format:
+[
+  {"fileName": "file1.pdf", "destination": "C:\\\\Users\\\\admin\\\\Documents\\\\CNU\\\\3_2\\\\컴파일러개론"},
+  {"fileName": "file2.pdf", "destination": "C:\\\\Users\\\\admin\\\\Documents\\\\Reports"}
+]`,
+      temperature: 0.3,
+    })
+
+    // Parse AI response
+    const jsonMatch = text.match(/\[[\s\S]*\]/)
+    if (!jsonMatch) {
+      throw new Error("Failed to parse AI response")
+    }
+
+    const results = JSON.parse(jsonMatch[0])
+    return { success: true, results }
+  } catch (error) {
+    return { success: false, error: error.message }
   }
 })
 

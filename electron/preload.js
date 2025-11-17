@@ -11,7 +11,7 @@ contextBridge.exposeInMainWorld("electron", {
   readFile: (filePath) => ipcRenderer.invoke("read-file", filePath),
   listFiles: (directoryPath) => ipcRenderer.invoke("list-files", directoryPath),
 
-  moveFiles: (operations, logName) => ipcRenderer.invoke("move-files", operations, logName),
+  moveFiles: (operations, logName, conflictOption) => ipcRenderer.invoke("move-files", operations, logName, conflictOption),
   deleteFiles: (filePaths, logName) => ipcRenderer.invoke("delete-files", filePaths, logName),
 
   readLogs: () => ipcRenderer.invoke("read-logs"),
@@ -21,4 +21,7 @@ contextBridge.exposeInMainWorld("electron", {
   loadSettings: () => ipcRenderer.invoke("load-settings"),
   saveSettings: (settings) => ipcRenderer.invoke("save-settings", settings),
   checkConflicts: (operations) => ipcRenderer.invoke("check-conflicts", operations),
+
+  // AI organization
+  organizeFiles: (files, prompt, folders, apiKey) => ipcRenderer.invoke("organize-files", { files, prompt, folders, apiKey }),
 })
