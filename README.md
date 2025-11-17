@@ -14,7 +14,7 @@ pnpm install
 ```
 
 2. Run in development mode:
-\`\`\`bash
+```bash
 npm run electron:dev
 ```
 or
