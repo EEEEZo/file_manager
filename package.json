@@ -89,7 +89,9 @@
     "path": "0.12.7",
     "fs": "0.0.1-security",
     "ai": "5.0.86",
-    "@ai-sdk/openai": "2.0.59"
+    "@ai-sdk/openai": "2.0.59",
+    "@ai-sdk/google": "^1.0.16",
+    "ollama-ai-provider": "^1.0.6"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4.1.9",

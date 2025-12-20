@@ -1,8 +1,7 @@
 const { app, BrowserWindow, ipcMain, dialog } = require("electron")
 const path = require("path")
 const fs = require("fs").promises // Add file system module for reading files
-const { generateText } = require("ai")
-const { createOpenAI } = require("@ai-sdk/openai")
+const crypto = require("crypto") // Add crypto for checksum calculation
 
 let mainWindow
 
@@ -30,7 +29,20 @@ const initializeSettings = async () => {
   try {
     await fs.access(settingsPath)
   } catch {
-    await fs.writeFile(settingsPath, JSON.stringify({ folders: [], apiKey: "" }))
+    await fs.writeFile(
+      settingsPath,
+      JSON.stringify({
+        folders: [],
+        openaiKey: "",
+        geminiKey: "",
+        ollamaBaseUrl: "http://localhost:11434",
+        ollamaModel: "llama3",
+        selectedModel: "openai",
+        selectedModelName: "gpt-4o-mini",
+        hasSeenOnboarding: false, // Add onboarding flag
+        allowAIFolderCreation: false, // Add AI folder creation setting to initial settings
+      }),
+    )
   }
 }
 
@@ -56,8 +68,7 @@ function createWindow() {
     // Open DevTools in development
     mainWindow.webContents.openDevTools()
   } else {
-    const indexPath = path.join(__dirname, "../out/index.html")
-    mainWindow.loadFile(indexPath)
+    mainWindow.loadURL(`file://${path.join(__dirname, "../out/index.html")}`)
   }
 
   mainWindow.on("closed", () => {
@@ -106,7 +117,6 @@ ipcMain.handle("read-file", async (event, filePath) => {
 })
 
 ipcMain.handle("list-files", async (event, directoryPath) => {
-  // Add handler to list files in directory
   try {
     const files = await fs.readdir(directoryPath)
     const fileDetails = await Promise.all(
@@ -118,6 +128,8 @@ ipcMain.handle("list-files", async (event, directoryPath) => {
           path: filePath,
           isDirectory: stats.isDirectory(),
           size: stats.size,
+          mtime: stats.mtime,
+          ctime: stats.ctime,
         }
       }),
     )
@@ -126,6 +138,17 @@ ipcMain.handle("list-files", async (event, directoryPath) => {
     return { success: false, error: error.message }
   }
 })
+
+const calculateChecksum = async (filePath) => {
+  try {
+    const fileBuffer = await fs.readFile(filePath)
+    const hashSum = crypto.createHash("sha256")
+    hashSum.update(fileBuffer)
+    return hashSum.digest("hex")
+  } catch (error) {
+    return null
+  }
+}
 
 ipcMain.handle("move-files", async (event, operations, logName, conflictOption = "rename") => {
   try {
@@ -139,11 +162,30 @@ ipcMain.handle("move-files", async (event, operations, logName, conflictOption =
       await fs.mkdir(destDir, { recursive: true })
 
       let finalDestPath = destinationPath
+      let isDuplicate = false
 
       // Check if file exists and handle conflict
       try {
         await fs.access(destinationPath)
-        
+
+        const sourceChecksum = await calculateChecksum(sourcePath)
+        const destChecksum = await calculateChecksum(destinationPath)
+
+        if (sourceChecksum && destChecksum && sourceChecksum === destChecksum) {
+          // Files are identical - delete source file
+          await fs.unlink(sourcePath)
+          results.push({
+            fileName: path.basename(sourcePath),
+            sourcePath,
+            destinationPath: "Deleted (identical file exists)",
+            success: true,
+            isDuplicate: true,
+          })
+          isDuplicate = true
+          continue
+        }
+
+        // Files have same name but different content - handle conflict
         if (conflictOption === "skip") {
           results.push({
             fileName: path.basename(sourcePath),
@@ -173,15 +215,17 @@ ipcMain.handle("move-files", async (event, operations, logName, conflictOption =
         // File doesn't exist, proceed normally
       }
 
-      // Move the file
-      await fs.rename(sourcePath, finalDestPath)
+      if (!isDuplicate) {
+        // Move the file
+        await fs.rename(sourcePath, finalDestPath)
 
-      results.push({
-        fileName: path.basename(sourcePath),
-        sourcePath,
-        destinationPath: finalDestPath,
-        success: true,
-      })
+        results.push({
+          fileName: path.basename(sourcePath),
+          sourcePath,
+          destinationPath: finalDestPath,
+          success: true,
+        })
+      }
     }
 
     // Create log entry
@@ -197,6 +241,7 @@ ipcMain.handle("move-files", async (event, operations, logName, conflictOption =
         sourcePath: r.sourcePath,
         destinationPath: r.destinationPath,
         selected: true,
+        isDuplicate: r.isDuplicate || false,
       })),
     }
 
@@ -310,9 +355,19 @@ ipcMain.handle("save-settings", async (event, newSettings) => {
     try {
       settings = JSON.parse(await fs.readFile(settingsPath, "utf-8"))
     } catch {
-      settings = { folders: [], apiKey: "" }
+      settings = {
+        folders: [],
+        openaiKey: "",
+        geminiKey: "",
+        ollamaBaseUrl: "http://localhost:11434",
+        ollamaModel: "llama3",
+        selectedModel: "openai",
+        selectedModelName: "gpt-4o-mini",
+        hasSeenOnboarding: false, // Add onboarding flag
+        allowAIFolderCreation: false, // Add AI folder creation setting to initial settings
+      }
     }
-    
+
     // Merge new settings
     settings = { ...settings, ...newSettings }
     await fs.writeFile(settingsPath, JSON.stringify(settings, null, 2))
@@ -325,7 +380,7 @@ ipcMain.handle("save-settings", async (event, newSettings) => {
 ipcMain.handle("check-conflicts", async (event, operations) => {
   try {
     const conflicts = []
-    
+
     for (const op of operations) {
       try {
         await fs.access(op.destinationPath)
@@ -354,54 +409,10 @@ ipcMain.handle("check-conflicts", async (event, operations) => {
   }
 })
 
-ipcMain.handle("organize-files", async (event, { files, prompt, folders, apiKey }) => {
+ipcMain.handle("create-folder", async (event, folderPath) => {
   try {
-    if (!apiKey) {
-      throw new Error("OpenAI API key not found. Please set your API key in Settings.")
-    }
-
-    const openai = createOpenAI({
-      apiKey: apiKey,
-    })
-
-    const { text } = await generateText({
-      model: openai("gpt-4o-mini"),
-      prompt: `You are a file organization assistant. Based on the user's request and file contents, determine which folder each file should be moved to.
-
-User's organization request: "${prompt}"
-
-Available folders:
-${folders.map((f, i) => `${i + 1}. ${f}`).join("\n")}
-
-Files to organize:
-${files
-  .map(
-    (f, i) => `
-File ${i + 1}: ${f.fileName}
-Content preview: ${f.content.substring(0, 500)}...
-`,
-  )
-  .join("\n")}
-
-For each file, respond with a JSON array containing objects with "fileName" and "destination" (full folder path from the available folders list).
-Only respond with the JSON array, no additional text.
-
-Example response format:
-[
-  {"fileName": "file1.pdf", "destination": "C:\\\\Users\\\\admin\\\\Documents\\\\CNU\\\\3_2\\\\컴파일러개론"},
-  {"fileName": "file2.pdf", "destination": "C:\\\\Users\\\\admin\\\\Documents\\\\Reports"}
-]`,
-      temperature: 0.3,
-    })
-
-    // Parse AI response
-    const jsonMatch = text.match(/\[[\s\S]*\]/)
-    if (!jsonMatch) {
-      throw new Error("Failed to parse AI response")
-    }
-
-    const results = JSON.parse(jsonMatch[0])
-    return { success: true, results }
+    await fs.mkdir(folderPath, { recursive: true })
+    return { success: true }
   } catch (error) {
     return { success: false, error: error.message }
   }
